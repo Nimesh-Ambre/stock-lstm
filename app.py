@@ -6,11 +6,16 @@ import plotly.express as px
 import plotly.graph_objects as go
 import datetime
 import numpy as np
+import tensorflow as tf
+from sklearn.preprocessing import MinMaxScaler
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, LSTM
 
 # Set up Streamlit app
-st.set_page_config(page_title="Stock Market Data Analysis", layout="wide")
-st.title("📈 Stock Market Data Analysis")
-st.markdown("### A user-friendly dashboard to analyze U.S. stock performance, risk, and trends")
+st.set_page_config(page_title="Stock Market Data analysis", layout="wide")
+st.title("📈 Stock Market Data analysis")
+st.markdown("### A user-friendly dashboard to analyze sector performance, risk, and stock trends in India")
+
 
 # Fetch live stock data from Yahoo Finance
 @st.cache_data
@@ -23,6 +28,7 @@ def fetch_stock_list():
         st.error(f"Error fetching stock data: {e}")
         return pd.DataFrame()
 
+
 stock_list = fetch_stock_list()
 if stock_list.empty:
     st.error("⚠️ No stock data available.")
@@ -31,6 +37,7 @@ if stock_list.empty:
 # Sidebar for user selection
 time_range = st.sidebar.selectbox("Select Time Range", ["1y", "5y", "10y", "max"])
 selected_stock = st.sidebar.selectbox("Choose a Stock", stock_list["Ticker"].unique())
+
 
 # Fetch historical data for selected stock
 @st.cache_data
@@ -43,6 +50,7 @@ def get_stock_data(ticker, period):
     except Exception as e:
         st.error(f"Error fetching stock data: {e}")
         return pd.DataFrame()
+
 
 stock_data = get_stock_data(selected_stock, time_range)
 if stock_data.empty:
@@ -85,6 +93,7 @@ if not stock_data.empty:
 # AI-Based Stock Recommendations
 st.subheader("📊 AI-Based Stock Recommendation")
 
+
 def stock_recommendation(stock_data):
     try:
         if stock_data.empty:
@@ -117,8 +126,56 @@ def stock_recommendation(stock_data):
     except Exception as e:
         return f"Error in recommendation: {e}"
 
+
 if not stock_data.empty:
     recommendation = stock_recommendation(stock_data)
     st.markdown(
         f"<div style='padding:10px; border-radius:5px; background-color:#2e86c1; color:white; font-size:18px; font-weight:bold;'>{recommendation}</div>",
         unsafe_allow_html=True)
+
+# ------------------------ LSTM MODEL FOR STOCK PRICE PREDICTION ------------------------
+
+# Prepare the data for LSTM
+def prepare_data(stock_data, look_back=60):
+    data = stock_data[['Close']].values
+    scaler = MinMaxScaler(feature_range=(0, 1))
+    scaled_data = scaler.fit_transform(data)
+
+    X = []
+    y = []
+
+    for i in range(look_back, len(scaled_data)):
+        X.append(scaled_data[i - look_back:i, 0])
+        y.append(scaled_data[i, 0])
+
+    X, y = np.array(X), np.array(y)
+    X = np.reshape(X, (X.shape[0], X.shape[1], 1))
+
+    return X, y, scaler
+
+X, y, scaler = prepare_data(stock_data)
+
+# Build LSTM model
+def build_lstm_model(input_shape):
+    model = Sequential()
+    model.add(LSTM(units=50, return_sequences=True, input_shape=input_shape))
+    model.add(LSTM(units=50, return_sequences=False))
+    model.add(Dense(units=1))
+    model.compile(optimizer='adam', loss='mean_squared_error')
+    return model
+
+# Train the LSTM model
+model = build_lstm_model((X.shape[1], 1))
+model.fit(X, y, epochs=10, batch_size=32)
+
+# Predict stock prices
+def predict_stock_price(model, scaler, stock_data, look_back=60):
+    inputs = stock_data[['Close']].tail(look_back).values
+    inputs = scaler.transform(inputs)
+    inputs = np.reshape(inputs, (1, look_back, 1))
+    predicted_price = model.predict(inputs)
+    predicted_price = scaler.inverse_transform(predicted_price)
+    return predicted_price[0][0]
+
+predicted_price = predict_stock_price(model, scaler, stock_data)
+st.subheader(f"🔮 Predicted Price for the next day: {predicted_price:.2f}")
